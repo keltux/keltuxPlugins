@@ -1,0 +1,15 @@
+# Build outputs (CI builds fresh; never commit these)
+build/
+out/
+.gradle/
+*.apk
+!samples/hello-plugin/src/main/jniLibs/**/*.so
+
+# Toolchain downloads and staging (fetched by the build scripts / workflow)
+tools/*/build/
+tools/*/*.deb
+
+# Local IDE noise
+.idea/
+*.iml
+.DS_Store

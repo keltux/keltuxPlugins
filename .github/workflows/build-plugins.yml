@@ -1,0 +1,247 @@
+name: Build plugins
+
+# Build the keltux plugins (hello / Dart / NDK / C#) into installable APKs and refresh index.json.
+#
+# The plugin sources here are branded forks of the upstream samples. They cannot build standalone: a
+# plugin compiles against the host IDE's SPI (:plugin-api, :plugin-ui-api, :build-api, :interp-api) and
+# the build-logic convention plugin, none of which are published as jars. So this workflow checks out
+# the keltux host IDE (keltux/keltux), overlays THIS repo's branded plugin sources and toolchain
+# scripts on top of it, and builds each plugin inside that host tree — exactly how the upstream
+# workflows (.github/workflows/dart-plugin.yml, ndk-plugin.yml, dotnet-plugin.yml) do it, but with the
+# branded sources.
+#
+# Each plugin carries a toolchain that RUNS ON the device and is NOT in either repository:
+#   hello  — nothing (it ships prebuilt stub .so files in jniLibs)
+#   dart   — tools/dart-sdk/fetch-dart-android.sh (Termux's Dart package, one per ABI) + fetch-flutter.sh
+#   ndk    — tools/ndk-toolchain/build-llvm-android.sh (compiles clang/lld for Android, per ABI)
+#   csharp — tools/dotnet-toolchain/build-dotnet-android.sh (assembles .NET runtime + Roslyn, per ABI)
+#
+# NDK and C# are heavy (LLVM / .NET). Pick a single plugin from the dropdown to save time; "all" builds
+# everything. arm64-v8a is the phone ABI and is required; other ABIs are best-effort.
+#
+# On success the APKs are attached to a "plugins" release in THIS repo and index.json is rewritten, so
+# the keltux IDE's "Get plugins" page (which reads index.json from this repo) stays current.
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: Which plugin to build
+        type: choice
+        default: all
+        options:
+          - all
+          - hello
+          - dart
+          - ndk
+          - csharp
+      abi:
+        description: Device ABI (NDK / C# are one APK per ABI)
+        type: choice
+        default: arm64-v8a
+        options:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86_64
+
+env:
+  JAVA_VERSION: "25"
+  HOST_REPO: keltux/keltux
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-plugins-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ inputs.plugin }} (${{ inputs.abi }})
+    runs-on: ubuntu-latest
+    steps:
+      # The host IDE tree the plugins build inside.
+      - name: Check out the keltux host IDE
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOST_REPO }}
+          ref: main
+          path: host
+
+      # This repo: the branded plugin sources + toolchain scripts + the catalog.
+      - name: Check out keltuxPlugins
+        uses: actions/checkout@v4
+        with:
+          path: plugins
+
+      # Overlay the branded sources onto the host tree, then build there.
+      - name: Overlay branded plugin sources onto the host IDE
+        run: |
+          set -euo pipefail
+          for p in hello-plugin dart-plugin ndk-plugin dotnet-plugin; do
+            rm -rf "host/samples/$p"
+            cp -r "plugins/samples/$p" "host/samples/$p"
+          done
+          for t in dart-sdk ndk-toolchain dotnet-toolchain; do
+            rm -rf "host/tools/$t"
+            cp -r "plugins/tools/$t" "host/tools/$t"
+          done
+          echo "Overlaid. Plugin ids now branded:"
+          grep -h '^id = ' host/samples/*/src/main/res/raw/codeassist_plugin.toml
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-36 platforms;android-36.1 build-tools;35.0.0"
+
+      - name: Disable Kotlin incremental compilation (CI)
+        run: |
+          mkdir -p ~/.gradle
+          echo "kotlin.incremental=false" >> ~/.gradle/gradle.properties
+
+      # ---- hello: no toolchain ----
+      - name: Build hello plugin
+        if: inputs.plugin == 'all' || inputs.plugin == 'hello'
+        working-directory: host
+        run: ./gradlew :samples:hello-plugin:assembleDebug --console=plain --stacktrace
+
+      # ---- dart: Dart SDK + Flutter ----
+      - name: Fetch the Dart SDK
+        if: inputs.plugin == 'all' || inputs.plugin == 'dart'
+        working-directory: host/tools/dart-sdk
+        env:
+          ABI: ${{ inputs.abi }}
+          # 3.13.7 is gone from Termux; 3.14.1 is current. Allow the checksum to move until pinned.
+          DART_VERSION: "3.14.1"
+          ALLOW_UNVERIFIED: "1"
+        run: ./fetch-dart-android.sh
+
+      - name: Set up Flutter
+        if: inputs.plugin == 'all' || inputs.plugin == 'dart'
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: "3.47.9"
+          channel: stable
+
+      - name: Stage Flutter
+        if: inputs.plugin == 'all' || inputs.plugin == 'dart'
+        working-directory: host/tools/dart-sdk
+        env:
+          FLUTTER_HOME: ${{ env.FLUTTER_ROOT }}
+        run: ./fetch-flutter.sh
+
+      - name: Build Dart plugin
+        if: inputs.plugin == 'all' || inputs.plugin == 'dart'
+        working-directory: host
+        run: ./gradlew :samples:dart-plugin:assembleDebug --console=plain --stacktrace
+
+      # ---- ndk: compile clang/lld for the device ----
+      - name: Build the NDK toolchain
+        if: inputs.plugin == 'all' || inputs.plugin == 'ndk'
+        working-directory: host
+        env:
+          HOST_ABI: ${{ inputs.abi }}
+        run: ./tools/ndk-toolchain/build-llvm-android.sh
+
+      - name: Build NDK plugin
+        if: inputs.plugin == 'all' || inputs.plugin == 'ndk'
+        working-directory: host
+        run: ./gradlew :samples:ndk-plugin:assembleDebug --console=plain --stacktrace
+
+      # ---- csharp: assemble .NET runtime + Roslyn ----
+      - name: Build the .NET toolchain
+        if: inputs.plugin == 'all' || inputs.plugin == 'csharp'
+        working-directory: host
+        env:
+          HOST_ABI: ${{ inputs.abi }}
+        run: ./tools/dotnet-toolchain/build-dotnet-android.sh
+
+      - name: Build C# plugin
+        if: inputs.plugin == 'all' || inputs.plugin == 'csharp'
+        working-directory: host
+        run: ./gradlew :samples:dotnet-plugin:assembleDebug "-Pdotnet.abi=${{ inputs.abi }}" --console=plain --stacktrace
+
+      # ---- collect APKs ----
+      - name: Collect the built APKs
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ABI='${{ inputs.abi }}'
+          # hello is a single universal APK (no ABI split).
+          find host/samples/hello-plugin/build/outputs/apk -name '*.apk' -exec cp {} dist/ \; 2>/dev/null || true
+          # the rest are one APK per ABI; keep only this ABI's (name carries the abi for split builds).
+          for p in dart-plugin ndk-plugin dotnet-plugin; do
+            find "host/samples/$p/build/outputs/apk" -name "*$ABI*.apk" -exec cp {} dist/ \; 2>/dev/null || true
+          done
+          # Rename to a clean keltux-<Plugin>-<version>-<abi>.apk scheme.
+          cd dist
+          for f in *.apk; do
+            [ -e "$f" ] || continue
+            case "$f" in
+              *hello*)    mv "$f" "keltux-Hello-1.0.0.apk" ;;
+              *dart*)     mv "$f" "keltux-Dart-0.3.0-$ABI.apk" ;;
+              *ndk*)      mv "$f" "keltux-NDK-1.4.0-$ABI.apk" ;;
+              *dotnet*)   mv "$f" "keltux-CSharp-1.1.0-$ABI.apk" ;;
+            esac
+          done
+          echo "Built:"
+          ls -la
+
+      - name: Upload the APKs as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keltux-plugins-${{ inputs.plugin }}-${{ inputs.abi }}
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # Attach to a rolling "plugins" release so index.json can point at stable download URLs.
+      - name: Attach the APKs to the plugins release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=plugins
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "keltux plugins" --notes "Installable keltux plugin APKs. The IDE's \"Get plugins\" page reads index.json for this list."
+          for f in dist/*.apk; do
+            gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber
+          done
+
+      # Refresh index.json so the IDE lists what was just built (id, name, version, size, download URL).
+      - name: Refresh index.json
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 plugins/.github/scripts/make_index.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag plugins \
+            --dist dist \
+            --out index.json
+          cat index.json
+
+      - name: Commit index.json
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name "keltux CI"
+          git config user.email "actions@github.com"
+          git add index.json
+          if git diff --cached --quiet; then
+            echo "index.json unchanged"
+          else
+            git commit -m "chore: refresh plugin index.json" -m "[skip ci]"
+            git push
+          fi
