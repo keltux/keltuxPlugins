@@ -1,6 +1,6 @@
 name: Build plugins
 
-# Build the keltux plugins (hello / Dart / NDK / C#) into installable APKs and refresh index.json.
+# Build the keltux plugins (Dart / NDK / C#) into installable APKs and refresh index.json.
 #
 # The plugin sources here are branded forks of the upstream samples. They cannot build standalone: a
 # plugin compiles against the host IDE's SPI (:plugin-api, :plugin-ui-api, :build-api, :interp-api) and
@@ -11,7 +11,6 @@ name: Build plugins
 # branded sources.
 #
 # Each plugin carries a toolchain that RUNS ON the device and is NOT in either repository:
-#   hello  — nothing (it ships prebuilt stub .so files in jniLibs)
 #   dart   — tools/dart-sdk/fetch-dart-android.sh (Termux's Dart package, one per ABI) + fetch-flutter.sh
 #   ndk    — tools/ndk-toolchain/build-llvm-android.sh (compiles clang/lld for Android, per ABI)
 #   csharp — tools/dotnet-toolchain/build-dotnet-android.sh (assembles .NET runtime + Roslyn, per ABI)
@@ -31,7 +30,6 @@ on:
         default: all
         options:
           - all
-          - hello
           - dart
           - ndk
           - csharp
@@ -81,7 +79,7 @@ jobs:
       - name: Overlay branded plugin sources onto the host IDE
         run: |
           set -euo pipefail
-          for p in hello-plugin dart-plugin ndk-plugin dotnet-plugin; do
+          for p in dart-plugin ndk-plugin dotnet-plugin; do
             rm -rf "host/samples/$p"
             cp -r "plugins/samples/$p" "host/samples/$p"
           done
@@ -110,12 +108,6 @@ jobs:
         run: |
           mkdir -p ~/.gradle
           echo "kotlin.incremental=false" >> ~/.gradle/gradle.properties
-
-      # ---- hello: no toolchain ----
-      - name: Build hello plugin
-        if: inputs.plugin == 'all' || inputs.plugin == 'hello'
-        working-directory: host
-        run: ./gradlew :samples:hello-plugin:assembleDebug --console=plain --stacktrace
 
       # ---- dart: Dart SDK + Flutter ----
       - name: Fetch the Dart SDK
@@ -179,9 +171,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           ABI='${{ inputs.abi }}'
-          # hello is a single universal APK (no ABI split).
-          find host/samples/hello-plugin/build/outputs/apk -name '*.apk' -exec cp {} dist/ \; 2>/dev/null || true
-          # the rest are one APK per ABI; keep only this ABI's (name carries the abi for split builds).
+          # one APK per ABI; keep only this ABI's (name carries the abi for split builds).
           for p in dart-plugin ndk-plugin dotnet-plugin; do
             find "host/samples/$p/build/outputs/apk" -name "*$ABI*.apk" -exec cp {} dist/ \; 2>/dev/null || true
           done
@@ -190,7 +180,6 @@ jobs:
           for f in *.apk; do
             [ -e "$f" ] || continue
             case "$f" in
-              *hello*)    mv "$f" "keltux-Hello-1.0.0.apk" ;;
               *dart*)     mv "$f" "keltux-Dart-0.3.0-$ABI.apk" ;;
               *ndk*)      mv "$f" "keltux-NDK-1.4.0-$ABI.apk" ;;
               *dotnet*)   mv "$f" "keltux-CSharp-1.1.0-$ABI.apk" ;;

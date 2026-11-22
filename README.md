@@ -8,7 +8,6 @@ This repo is two things:
 
    | Plugin | id | What it adds | Toolchain it carries |
    | --- | --- | --- | --- |
-   | `hello-plugin` | `dev.keltux.hello` | The smallest complete plugin: a settings page, a palette command, an editor action, a tool window | none (prebuilt stub `.so`) |
    | `dart-plugin` | `dev.keltux.dart` | Dart + Flutter on device, hot reload, live previews | Dart SDK (Termux) + Flutter |
    | `ndk-plugin` | `dev.keltux.ndk` | C / C++ on device | clang + lld (compiled for Android) |
    | `dotnet-plugin` | `dev.keltux.csharp` | C# on device | .NET runtime + Roslyn |
@@ -27,10 +26,10 @@ plugin, which aren't published as jars. So
 **keltux host IDE** ([keltux/keltux](https://github.com/keltux/keltux)), overlays these branded
 plugin sources and the toolchain scripts onto it, and builds each plugin inside that tree.
 
-Run it from the **Actions** tab → **Build plugins** → pick a plugin (`hello` / `dart` / `ndk` /
-`csharp`, or `all`) and an ABI. `hello` is quick; `ndk` and `csharp` compile a whole toolchain and
-take a while. On success the APKs are attached to the `plugins` release and `index.json` is
-refreshed.
+Run it from the **Actions** tab → **Build plugins** → pick a plugin (`dart` / `ndk` /
+`csharp`, or `all`) and an ABI. `dart` is quickest; `ndk` and `csharp` compile a whole toolchain
+(clang / .NET) and take a while. On success the APKs are attached to the `plugins` release and
+`index.json` is refreshed.
 
 ## Installing
 
