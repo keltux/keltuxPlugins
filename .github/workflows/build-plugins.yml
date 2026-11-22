@@ -234,14 +234,17 @@ jobs:
 
       - name: Commit index.json
         if: always()
+        working-directory: plugins
         run: |
           set -euo pipefail
           git config user.name "keltux CI"
           git config user.email "actions@github.com"
+          # The workflow checked this repo out into ./plugins; commit the refreshed catalog there and
+          # push it back. GITHUB_TOKEN needs contents:write (granted at the workflow level).
           git add index.json
           if git diff --cached --quiet; then
             echo "index.json unchanged"
           else
             git commit -m "chore: refresh plugin index.json" -m "[skip ci]"
-            git push
+            git push origin HEAD:${GITHUB_REF_NAME}
           fi
