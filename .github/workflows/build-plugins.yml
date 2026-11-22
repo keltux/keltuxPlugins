@@ -49,8 +49,10 @@ env:
 permissions:
   contents: write
 
+# Group per plugin so two different plugins (e.g. ndk + csharp) can build in parallel without
+# cancelling each other; a re-run of the SAME plugin still supersedes the previous run.
 concurrency:
-  group: build-plugins-${{ github.ref }}
+  group: build-plugins-${{ github.ref }}-${{ inputs.plugin }}
   cancel-in-progress: true
 
 jobs:
