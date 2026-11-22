@@ -222,6 +222,8 @@ jobs:
           done
 
       # Refresh index.json so the IDE lists what was just built (id, name, version, size, download URL).
+      # Runs from the host root (dist/ and the script live there), so it writes to <host>/index.json;
+      # we then copy it into plugins/ so the commit step (working-directory: plugins) can see it.
       - name: Refresh index.json
         if: always()
         env:
@@ -233,7 +235,8 @@ jobs:
             --tag plugins \
             --dist dist \
             --out index.json
-          cat index.json
+          cp index.json plugins/index.json
+          cat plugins/index.json
 
       - name: Commit index.json
         if: always()
