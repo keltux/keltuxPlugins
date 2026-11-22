@@ -60,13 +60,16 @@ jobs:
     name: ${{ inputs.plugin }} (${{ inputs.abi }})
     runs-on: ubuntu-latest
     steps:
-      # The host IDE tree the plugins build inside.
+      # The host IDE tree the plugins build inside. keltux/keltux is private, so the default
+      # GITHUB_TOKEN (scoped to THIS repo only) can't read it — pass a PAT that can. A same-account PAT
+      # works; store it as the ACTIONS_PAT secret on this repo if the token isn't enough.
       - name: Check out the keltux host IDE
         uses: actions/checkout@v4
         with:
           repository: ${{ env.HOST_REPO }}
           ref: main
           path: host
+          token: ${{ secrets.ACTIONS_PAT || secrets.GITHUB_TOKEN }}
 
       # This repo: the branded plugin sources + toolchain scripts + the catalog.
       - name: Check out keltuxPlugins
